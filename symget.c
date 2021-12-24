@@ -7,7 +7,7 @@
 #include <stdarg.h>
 #include <intrin.h>
 
-#define MAX_THREAD_COUNT 64
+#define MAX_THREAD_COUNT 8
 #define UPDATE_INTERVAL_MSEC 250
 
 #pragma comment (lib, "kernel32.lib")
