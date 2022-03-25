@@ -340,7 +340,7 @@ static DWORD WINAPI ProcessThread(LPVOID arg)
 		if (h != INVALID_HANDLE_VALUE)
 		{
 			LARGE_INTEGER size;
-			if (GetFileSizeEx(h, &size) && size.QuadPart != 0)
+			if (GetFileSizeEx(h, &size) && size.QuadPart > sizeof(IMAGE_DOS_HEADER))
 			{
 				HANDLE mapping = CreateFileMappingW(h, NULL, PAGE_READONLY, size.HighPart, size.LowPart, NULL);
 				if (mapping != NULL)
@@ -349,7 +349,7 @@ static DWORD WINAPI ProcessThread(LPVOID arg)
 					if (base)
 					{
 						const IMAGE_DOS_HEADER* dos = base;
-						if (dos->e_magic == IMAGE_DOS_SIGNATURE && (dos->e_lfanew + (LONG)sizeof(IMAGE_NT_HEADERS) < size.QuadPart))
+						if (dos->e_magic == IMAGE_DOS_SIGNATURE && ((SIZE_T)dos->e_lfanew + sizeof(IMAGE_NT_HEADERS) < size.QuadPart))
 						{
 							const IMAGE_NT_HEADERS* nt = (void*)((char*)base + dos->e_lfanew);
 							if (nt->Signature == IMAGE_NT_SIGNATURE)
