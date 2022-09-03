@@ -24,4 +24,4 @@ if "%1" equ "debug" (
   set LINK=/OPT:REF /OPT:ICF libvcruntime.lib
 )
 
-cl.exe /nologo symget.c /link /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /FIXED
+cl.exe /nologo /W3 /WX symget.c /link /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /FIXED
