@@ -4,6 +4,7 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <winhttp.h>
+#include <fdi.h>
 #include <stdarg.h>
 #include <intrin.h>
 
@@ -15,6 +16,7 @@
 #pragma comment (lib, "shell32.lib")
 #pragma comment (lib, "shlwapi.lib")
 #pragma comment (lib, "winhttp.lib")
+#pragma comment (lib, "cabinet.lib")
 
 #ifdef _DEBUG
 #define Assert(cond) do { if (!(cond)) __debugbreak(); } while (0)
@@ -76,6 +78,63 @@ static DWORD rva_to_offset(const IMAGE_NT_HEADERS* nt, DWORD rva)
 	return 0;
 }
 
+static FNALLOC(CabAlloc)
+{
+	return HeapAlloc(GetProcessHeap(), 0, cb);
+}
+
+static FNFREE(CabFree)
+{
+	HeapFree(GetProcessHeap(), 0, pv);
+}
+
+static FNOPEN(CabOpen)
+{
+	const int O_RDONLY = 0;
+	const int O_WRONLY = 1;
+	const int O_RDWR = 2;
+	const int O_CREAT = 0x200;
+	DWORD access = oflag & O_RDWR ? GENERIC_READ | GENERIC_WRITE : oflag & O_WRONLY ? GENERIC_WRITE : GENERIC_READ;
+	DWORD create = oflag & O_CREAT ? CREATE_ALWAYS : OPEN_EXISTING;
+	return (INT_PTR)CreateFileA(pszFile, access, FILE_SHARE_READ, NULL, create, FILE_ATTRIBUTE_NORMAL, NULL);
+}
+
+static FNREAD(CabRead)
+{
+	DWORD read;
+	return ReadFile((HANDLE)hf, pv, cb, &read, NULL) ? read : -1;
+}
+
+static FNWRITE(CabWrite)
+{
+	DWORD written;
+	return WriteFile((HANDLE)hf, pv, cb, &written, NULL) ? written : -1;
+}
+
+static FNCLOSE(CabClose)
+{
+	return CloseHandle((HANDLE)hf) ? 0 : -1;
+}
+
+static FNSEEK(CabSeek)
+{
+	return SetFilePointer((HANDLE)hf, dist, NULL, seektype);
+}
+
+static FNFDINOTIFY(CabNotify)
+{
+	if (fdint == fdintCOPY_FILE)
+	{
+		return (INT_PTR)CreateFileW((LPWSTR)pfdin->pv, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	}
+	else if (fdint == fdintCLOSE_FILE_INFO)
+	{
+		CloseHandle((HANDLE)pfdin->hf);
+		return TRUE;
+	}
+	return 0;
+}
+
 static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 {
 	WCHAR folder[MAX_PATH];
@@ -113,6 +172,7 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 	DWORD status = 0;
 
 	HANDLE handle = INVALID_HANDLE_VALUE;
+	BOOL compressed = FALSE;
 
 	WCHAR url_path[1024];
 	URL_COMPONENTSW url =
@@ -121,8 +181,10 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 		.lpszUrlPath = url_path,
 		.dwUrlPathLength = _countof(url_path),
 	};
+	int trycount = 0;
 	if (WinHttpCrackUrl(full_url, 0, 0, &url))
 	{
+retry:;
 		HINTERNET request = WinHttpOpenRequest(connection, NULL, url_path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
 		if (request != NULL)
 		{
@@ -130,7 +192,19 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 			{
 				DWORD size = sizeof(status);
 				WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX);
-				if (status == 200)
+				if (status == HTTP_STATUS_NOT_FOUND)
+				{
+					if (url_path[url.dwUrlPathLength - 1] != L'_')
+					{
+						// try compressed
+						url_path[url.dwUrlPathLength - 1] = L'_';
+						WinHttpCloseHandle(request);
+						Sleep(100);
+						compressed = TRUE;
+						goto retry;
+					}
+				}
+				else if (status == HTTP_STATUS_OK)
 				{
 					for (;;)
 					{
@@ -150,6 +224,25 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 
 						if (handle == INVALID_HANDLE_VALUE)
 						{
+							if (buffer[0] == 'R' &&
+								buffer[1] == 'e' &&
+								buffer[2] == 'f' &&
+								buffer[3] == ' ' &&
+								buffer[4] == 'A' &&
+								buffer[5] == ':' &&
+								buffer[6] == ' ')
+							{
+								if (trycount == 10)
+								{
+									status = HTTP_STATUS_NOT_FOUND;
+									break;
+								}
+								WinHttpCloseHandle(request);
+								Sleep(100);
+								++trycount;
+								goto retry;	
+							}
+
 							handle = CreateFileW(temp_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 							if (handle == INVALID_HANDLE_VALUE)
 							{
@@ -217,12 +310,48 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 		return;
 	}
 
-	if (MoveFileExW(temp_path, output, MOVEFILE_REPLACE_EXISTING) == 0)
+	if (compressed)
 	{
-		// cannot move temp file into folder
-		InterlockedIncrement(&error_files);
-		DeleteFileW(temp_path);
-		return;
+		ERF err;
+		HFDI ctx = FDICreate(&CabAlloc, &CabFree, &CabOpen, &CabRead, &CabWrite, &CabClose, &CabSeek, cpuUNKNOWN, &err);
+		if (ctx)
+		{
+			char file[MAX_PATH];
+			char folder[MAX_PATH];
+			WideCharToMultiByte(CP_ACP, 0, temp_name, -1, file, _countof(file), NULL, NULL);
+			WideCharToMultiByte(CP_ACP, 0, output_folder, -1, folder, _countof(folder), NULL, NULL);
+			PathAddBackslashA(folder);
+
+			if (!FDICopy(ctx, file, folder, 0, &CabNotify, NULL, output))
+			{
+				// cannot uncompress
+				InterlockedIncrement(&error_files);
+				DeleteFileW(temp_path);
+				DeleteFileW(output);
+				FDIDestroy(ctx);
+				return;
+			}
+			FDIDestroy(ctx);
+
+			DeleteFileW(temp_path);
+		}
+		else
+		{
+			// cannot initialize cab decompression
+			InterlockedIncrement(&error_files);
+			DeleteFileW(temp_path);
+			return;
+		}
+	}
+	else
+	{
+		if (MoveFileExW(temp_path, output, MOVEFILE_REPLACE_EXISTING) == 0)
+		{
+			// cannot move temp file into folder
+			InterlockedIncrement(&error_files);
+			DeleteFileW(temp_path);
+			return;
+		}
 	}
 #endif
 
