@@ -520,7 +520,7 @@ static void run_folder(LPCWSTR folder)
 	PathCombineW(path, folder, L"*");
 
 	WIN32_FIND_DATAW data;
-	HANDLE find = FindFirstFileW(path, &data);
+	HANDLE find = FindFirstFileExW(path, FindExInfoBasic, &data, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
 	if (find != INVALID_HANDLE_VALUE)
 	{
 		do
