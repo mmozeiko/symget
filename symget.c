@@ -363,13 +363,15 @@ static BOOL process(HINTERNET connection, LPCVOID base, const IMAGE_NT_HEADERS* 
 {
 	const IMAGE_DATA_DIRECTORY* debug_data;
 
-	if (nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386 && nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+	if ((nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386 || nt->FileHeader.Machine == IMAGE_FILE_MACHINE_ARMNT)
+		&& nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC)
 	{
 		const IMAGE_NT_HEADERS32* nt32 = (void*)nt;
 		const IMAGE_OPTIONAL_HEADER32* opt = &nt32->OptionalHeader;
 		debug_data = &opt->DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
 	}
-	else if (nt->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 && nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+	else if ((nt->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 || nt->FileHeader.Machine == IMAGE_FILE_MACHINE_ARM64)
+		&& nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
 	{
 		const IMAGE_NT_HEADERS64* nt64 = (void*)nt;
 		const IMAGE_OPTIONAL_HEADER64* opt = &nt64->OptionalHeader;
