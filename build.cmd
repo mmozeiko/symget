@@ -12,8 +12,10 @@ where /Q cl.exe || (
 )
 
 if "%VSCMD_ARG_TGT_ARCH%" neq "x64" (
-  echo ERROR: please run this from MSVC x64 native tools command prompt, 32-bit target is not supported!
-  exit /b 1
+  if "%VSCMD_ARG_TGT_ARCH%" neq "arm64" (
+    echo ERROR: please run this from MSVC x64 or arm64 tools command prompt, 32-bit target is not supported!
+    exit /b 1
+  )
 )
 
 if "%1" equ "debug" (
@@ -24,4 +26,8 @@ if "%1" equ "debug" (
   set LINK=/OPT:REF /OPT:ICF libvcruntime.lib
 )
 
-cl.exe /nologo /W3 /WX symget.c /link /INCREMENTAL:NO /SUBSYSTEM:CONSOLE /FIXED
+if "%VSCMD_ARG_TGT_ARCH%" equ "x64" (
+  set LINK=%LINK% /FIXED
+)
+
+cl.exe /nologo /W3 symget.c /link /INCREMENTAL:NO /MANIFEST:EMBED /MANIFESTINPUT:symget.manifest /SUBSYSTEM:CONSOLE

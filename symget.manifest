@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
+<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0' xmlns:asmv3='urn:schemas-microsoft-com:asm.v3'>
+	<application xmlns="urn:schemas-microsoft-com:asm.v3">
+		<windowsSettings
+			xmlns:s16="http://schemas.microsoft.com/SMI/2016/WindowsSettings"
+			xmlns:s20="http://schemas.microsoft.com/SMI/2020/WindowsSettings">
+			<s16:longPathAware>true</s16:longPathAware>
+			<s20:heapType>SegmentHeap</s20:heapType>
+		</windowsSettings>
+	</application>
+</assembly>

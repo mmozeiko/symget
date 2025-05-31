@@ -1,13 +1,16 @@
 #define WIN32_LEAN_AND_MEAN
+#define PATHCCH_NO_DEPRECATE
 #include <windows.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <pathcch.h>
 #include <shlobj.h>
 #include <winhttp.h>
 #include <fdi.h>
 #include <stdarg.h>
 #include <intrin.h>
 
+#define MAX_LONG_PATH 32768
 #define MAX_THREAD_COUNT 8
 #define UPDATE_INTERVAL_MSEC 250
 
@@ -17,6 +20,7 @@
 #pragma comment (lib, "shlwapi.lib")
 #pragma comment (lib, "winhttp.lib")
 #pragma comment (lib, "cabinet.lib")
+#pragma comment (lib, "pathcch.lib")
 
 #ifdef _DEBUG
 #define Assert(cond) do { if (!(cond)) __debugbreak(); } while (0)
@@ -137,14 +141,14 @@ static FNFDINOTIFY(CabNotify)
 
 static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 {
-	WCHAR folder[MAX_PATH];
-	PathCombineW(folder, output_folder, name);
-	PathAppendW(folder, guid);
+	WCHAR folder[MAX_LONG_PATH];
+	PathCchCombineEx(folder, _countof(folder), output_folder, name, PATHCCH_ALLOW_LONG_PATHS);
+	PathCchAppendEx(folder, _countof(folder), guid, PATHCCH_ALLOW_LONG_PATHS);
 
-	WCHAR output[MAX_PATH];
-	PathCombineW(output, folder, name);
+	WCHAR output[MAX_LONG_PATH];
+	PathCchCombineEx(output, _countof(output), folder, name, PATHCCH_ALLOW_LONG_PATHS);
 
-	if (PathFileExistsW(output))
+	if (GetFileAttributesW(output) != INVALID_FILE_ATTRIBUTES)
 	{
 		return;
 	}
@@ -157,8 +161,8 @@ static void download(HINTERNET connection, LPCWSTR name, LPCWSTR guid)
 	WCHAR temp_name[MAX_PATH];
 	wsprintfW(temp_name, L"%s_%s.temp", name, guid);
 
-	WCHAR temp_path[MAX_PATH];
-	PathCombineW(temp_path, output_folder, temp_name);
+	WCHAR temp_path[MAX_LONG_PATH];
+	PathCchCombineEx(temp_path, _countof(temp_path), output_folder, temp_name, PATHCCH_ALLOW_LONG_PATHS);
 
 #if 0
 	// simulate 10MB/s downloading for 5 sec
@@ -240,7 +244,7 @@ retry:;
 								WinHttpCloseHandle(request);
 								Sleep(100);
 								++trycount;
-								goto retry;	
+								goto retry;
 							}
 
 							handle = CreateFileW(temp_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -403,9 +407,10 @@ static BOOL process(HINTERNET connection, LPCVOID base, const IMAGE_NT_HEADERS* 
 				const DWORD* age = (void*)(guid + 1);
 				const CHAR* pdb = (void*)(age + 1);
 
-				WCHAR filename[MAX_PATH];
-				MultiByteToWideChar(CP_UTF8, 0, pdb, -1, filename, MAX_PATH);
-				PathStripPathW(filename);
+				WCHAR pdbpath[MAX_LONG_PATH];
+				MultiByteToWideChar(CP_UTF8, 0, pdb, -1, pdbpath, _countof(pdbpath));
+				WCHAR* filename = StrRChrW(pdbpath, NULL, L'\\');
+				filename = filename ? filename + 1 : pdbpath;
 
 				WCHAR sguid[MAX_PATH];
 				wsprintfW(sguid, L"%08X%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X%x",
@@ -425,9 +430,10 @@ static BOOL process(HINTERNET connection, LPCVOID base, const IMAGE_NT_HEADERS* 
 				const DWORD* age = (void*)(timestamp + 1);
 				const CHAR* pdb = (void*)(age + 1);
 
-				WCHAR filename[MAX_PATH];
-				MultiByteToWideChar(CP_UTF8, 0, pdb, -1, filename, MAX_PATH);
-				PathStripPathW(filename);
+				WCHAR pdbpath[MAX_LONG_PATH];
+				MultiByteToWideChar(CP_UTF8, 0, pdb, -1, pdbpath, _countof(pdbpath));
+				WCHAR* filename = StrRChrW(pdbpath, NULL, L'\\');
+				filename = filename ? filename + 1 : pdbpath;
 
 				WCHAR sguid[MAX_PATH];
 				wsprintfW(sguid, L"%08X%x", *timestamp, *age);
@@ -518,8 +524,8 @@ static void add_file(LPCWSTR file)
 
 static void run_folder(LPCWSTR folder)
 {
-	WCHAR path[MAX_PATH];
-	PathCombineW(path, folder, L"*");
+	WCHAR* path = LocalAlloc(LMEM_FIXED, MAX_LONG_PATH * sizeof(*path));
+	PathCchCombineEx(path, MAX_LONG_PATH, folder, L"*", PATHCCH_ALLOW_LONG_PATHS);
 
 	WIN32_FIND_DATAW data;
 	HANDLE find = FindFirstFileExW(path, FindExInfoBasic, &data, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
@@ -534,20 +540,21 @@ static void run_folder(LPCWSTR folder)
 			}
 			else if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 			{
-				PathCombineW(path, folder, data.cFileName);
+				PathCchCombineEx(path, MAX_LONG_PATH, folder, data.cFileName, PATHCCH_ALLOW_LONG_PATHS);
 				run_folder(path);
 			}
 			else
 			{
-				WCHAR file[1024];
-				wsprintfW(file, L"%s\\%s", folder, data.cFileName);
-				add_file(file);
+				PathCchCombineEx(path, MAX_LONG_PATH, folder, data.cFileName, PATHCCH_ALLOW_LONG_PATHS);
+				add_file(path);
 			}
 		}
 		while (FindNextFileW(find, &data));
 
 		FindClose(find);
 	}
+
+	LocalFree(path);
 }
 
 static DWORD WINAPI RunThread(LPVOID arg)
@@ -556,7 +563,7 @@ static DWORD WINAPI RunThread(LPVOID arg)
 	{
 		LPCWSTR input = argv[i];
 
-		if (PathIsDirectoryW(input))
+		if (GetFileAttributesW(input) & FILE_ATTRIBUTE_DIRECTORY)
 		{
 			run_folder(input);
 		}
