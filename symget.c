@@ -192,6 +192,9 @@ retry:;
 		HINTERNET request = WinHttpOpenRequest(connection, NULL, url_path, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
 		if (request != NULL)
 		{
+			DWORD decompression = WINHTTP_DECOMPRESSION_FLAG_ALL;
+			WinHttpSetOption(request, WINHTTP_OPTION_DECOMPRESSION, &decompression, sizeof(decompression));
+
 			if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, NULL))
 			{
 				DWORD size = sizeof(status);
